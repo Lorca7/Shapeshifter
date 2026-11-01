@@ -1,0 +1,87 @@
+name: Build macOS app
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "macos/**"
+      - "js/**"
+      - "css/**"
+      - "index.html"
+      - ".github/workflows/macos-app.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # Sonoma, matching the macOS this app is built for.
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          swiftc --version
+
+      - name: Build Shapeshifter.app (universal)
+        env:
+          UNIVERSAL: "1"
+        run: ./macos/build.sh
+
+      - name: Verify the bundle
+        run: |
+          APP=build/Shapeshifter.app
+          test -x "$APP/Contents/MacOS/Shapeshifter" || { echo "no executable"; exit 1; }
+          test -f "$APP/Contents/Info.plist"          || { echo "no Info.plist"; exit 1; }
+          test -f "$APP/Contents/Resources/web/index.html" || { echo "editor missing"; exit 1; }
+          test -f "$APP/Contents/Resources/AppIcon.icns"   || echo "note: no icon"
+          plutil -lint "$APP/Contents/Info.plist"
+          echo "Architectures: $(lipo -archs "$APP/Contents/MacOS/Shapeshifter")"
+          lipo -archs "$APP/Contents/MacOS/Shapeshifter" | grep -q arm64  || { echo "missing arm64";  exit 1; }
+          lipo -archs "$APP/Contents/MacOS/Shapeshifter" | grep -q x86_64 || { echo "missing x86_64"; exit 1; }
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          du -sh "$APP"
+
+      - name: Smoke-test that it launches
+        run: |
+          APP=build/Shapeshifter.app
+          open "$APP"
+          sleep 12
+          if pgrep -x Shapeshifter >/dev/null; then
+            echo "Shapeshifter launched and is running."
+            osascript -e 'tell application "Shapeshifter" to quit' 2>/dev/null || pkill -x Shapeshifter || true
+          else
+            echo "Shapeshifter did not stay running."
+            exit 1
+          fi
+
+      - name: Package
+        run: |
+          cd build
+          ditto -c -k --sequesterRsrc --keepParent Shapeshifter.app ../Shapeshifter-macOS.zip
+          cd ..
+          shasum -a 256 Shapeshifter-macOS.zip | tee checksum.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Shapeshifter-macOS
+          path: |
+            Shapeshifter-macOS.zip
+            checksum.txt
+          retention-days: 90
+
+      - name: Publish a downloadable release
+        if: github.ref_name == 'claude/pensive-dirac-h7rdca' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="macos-build"
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" Shapeshifter-macOS.zip \
+            --title "Shapeshifter for macOS" \
+            --notes-file macos/RELEASE_NOTES.md
+          gh release view "$TAG" --json url --jq '"Download page: " + .url'

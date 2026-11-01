@@ -53,18 +53,33 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/web"
 # Target macOS 13 rather than whatever this machine runs, so the built app
 # matches LSMinimumSystemVersion in Info.plist and the availability checks in
 # the source mean what they say.
-TARGET="$(uname -m)-apple-macos13.0"
-note "Compiling $APP_NAME for $TARGET…"
+compile() {
+  swiftc \
+    -O \
+    -swift-version 5 \
+    -target "$1" \
+    -framework AppKit \
+    -framework WebKit \
+    -framework UniformTypeIdentifiers \
+    -o "$2" \
+    "$ROOT/macos/Sources/main.swift"
+}
 
-swiftc \
-  -O \
-  -swift-version 5 \
-  -target "$TARGET" \
-  -framework AppKit \
-  -framework WebKit \
-  -framework UniformTypeIdentifiers \
-  -o "$APP/Contents/MacOS/$APP_NAME" \
-  "$ROOT/macos/Sources/main.swift"
+if [ "${UNIVERSAL:-0}" = "1" ]; then
+  # One binary that runs on both Apple silicon and Intel. Used for the builds
+  # published for download, where the target Mac is unknown.
+  note "Compiling $APP_NAME as a universal binary…"
+  compile "arm64-apple-macos13.0"  "$BUILD/.$APP_NAME-arm64"
+  compile "x86_64-apple-macos13.0" "$BUILD/.$APP_NAME-x86_64"
+  lipo -create -output "$APP/Contents/MacOS/$APP_NAME" \
+    "$BUILD/.$APP_NAME-arm64" "$BUILD/.$APP_NAME-x86_64"
+  rm -f "$BUILD/.$APP_NAME-arm64" "$BUILD/.$APP_NAME-x86_64"
+  note "Architectures: $(lipo -archs "$APP/Contents/MacOS/$APP_NAME")"
+else
+  TARGET="$(uname -m)-apple-macos13.0"
+  note "Compiling $APP_NAME for $TARGET…"
+  compile "$TARGET" "$APP/Contents/MacOS/$APP_NAME"
+fi
 
 # --------------------------------------------------------- editor + metadata
 
