@@ -41,4 +41,11 @@ if (bridge) {
   const log = (message) => bridge.postMessage({ type: 'log', message: String(message) });
   addEventListener('error', (e) => log(`error: ${e.message} (${e.filename}:${e.lineno})`));
   addEventListener('unhandledrejection', (e) => log(`rejected: ${e.reason?.message ?? e.reason}`));
+  for (const level of ['warn', 'error']) {
+    const original = console[level].bind(console);
+    console[level] = (...args) => {
+      original(...args);
+      log(`${level}: ${args.map((a) => a?.message ?? String(a)).join(' ')}`);
+    };
+  }
 }

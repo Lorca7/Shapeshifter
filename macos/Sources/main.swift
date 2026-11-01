@@ -171,7 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         if isSelfTest {
             // If anything below stalls, fail loudly instead of hanging the build.
             DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
-                self?.finishSelfTest(ok: false, "timed out before a cutout was saved")
+                self?.failSelfTest("timed out before a cutout was saved")
             }
         }
     }
@@ -351,6 +351,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
     }
 
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        if isSelfTest { print("page: navigation failed: \(error)") }
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        if isSelfTest { print("page: could not load the editor: \(error)") }
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        if isSelfTest { print("page: the web content process crashed") }
+    }
+
     func webView(_ webView: WKWebView,
                  decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -392,7 +404,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             } else if attempt < 80 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { self.pollForPhoto(attempt: attempt + 1) }
             } else {
-                self.finishSelfTest(ok: false, "the photo never opened in the app")
+                self.failSelfTest("the photo never opened in the app")
             }
         }
     }
@@ -411,10 +423,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
     }
 
+    private var selfTestFinished = false
+
     private func finishSelfTest(ok: Bool, _ message: String) {
+        guard !selfTestFinished else { return }
+        selfTestFinished = true
         let line = (ok ? "SELFTEST PASS: " : "SELFTEST FAIL: ") + message + "\n"
         FileHandle.standardOutput.write(Data(line.utf8))
         exit(ok ? 0 : 1)
+    }
+
+    /// Fail, saying what the page was doing, so a broken build explains itself.
+    private func failSelfTest(_ reason: String) {
+        let script = """
+        const out = {
+          app: typeof window.shapeshifter,
+          transfer: typeof window.__openTransfer,
+          scripts: document.scripts.length,
+          hint: (document.getElementById('hint') || {}).textContent || null,
+        };
+        try { out.state = window.shapeshifter ? window.shapeshifter.state() : null; } catch (e) { out.stateError = String(e); }
+        try { out.fetchCss = (await fetch('/css/app.css')).status; } catch (e) { out.fetchCss = String(e); }
+        return JSON.stringify(out);
+        """
+        webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { [weak self] result in
+            let detail: String
+            switch result {
+            case .success(let value): detail = String(describing: value)
+            case .failure(let error): detail = "could not even inspect the page: \(error)"
+            }
+            self?.finishSelfTest(ok: false, "\(reason). Page state: \(detail)")
+        }
+        // If the page cannot answer at all, still fail rather than hang.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            self?.finishSelfTest(ok: false, "\(reason). The page did not respond.")
+        }
     }
 
     // MARK: Talking to the page
