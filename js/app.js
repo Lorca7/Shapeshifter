@@ -11,7 +11,7 @@
 import { loadImageFile } from './decode/image.js';
 import { exportCutout, cutoutRegion } from './export.js';
 import { distanceToSegment } from './geometry.js';
-import { inApp, requestOpen, saveFile } from './native.js';
+import { announceReady, inApp, requestOpen, saveFile } from './native.js';
 import { Renderer } from './render.js';
 import { View } from './view.js';
 import { $, baseName, clamp, formatBytes } from './util.js';
@@ -628,3 +628,5 @@ window.__openPhoto = async (base64, name, type) => {
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   if (!(await editor.open(new File([bytes], name, { type })))) throw new Error(editor.state().hint);
 };
+
+announceReady();

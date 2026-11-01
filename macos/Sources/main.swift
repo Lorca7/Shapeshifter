@@ -237,6 +237,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             } else {
                 presentSavePanel(data: data, suggestedName: name)
             }
+        case "ready":
+            pageIsReady()
         case "log":
             if isSelfTest, let text = body["message"] as? String { print("page: \(text)") }
         default:
@@ -314,7 +316,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     // MARK: Navigation policy
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    /// The editor has started and its entry points exist. Loading finishing is
+    /// not enough: the editor's own scripts run just after the page loads, so
+    /// a photo handed over any earlier finds nothing to receive it.
+    private func pageIsReady() {
+        guard !ready else { return }
         ready = true
         let pending = queuedFiles
         queuedFiles.removeAll()

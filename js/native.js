@@ -21,6 +21,15 @@ export function requestOpen(fileInput) {
   else fileInput.click();
 }
 
+/**
+ * Tell the Mac app the editor is up. The app must wait for this before handing
+ * over a photo: the page finishing loading is not enough, because the editor's
+ * own scripts run just after that.
+ */
+export function announceReady() {
+  if (bridge) bridge.postMessage({ type: 'ready' });
+}
+
 /** Hand the finished file to the user. Returns 'app' or 'download'. */
 export async function saveFile(blob, filename) {
   if (bridge) {

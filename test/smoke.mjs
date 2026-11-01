@@ -357,8 +357,12 @@ async function main() {
     });
     const app = await mac.newPage();
     await app.goto(BASE, { waitUntil: 'networkidle' });
-    await app.locator('#chooseBtn').click();
     let posted = await app.evaluate(() => window.__posted);
+    check('the editor tells the app when it is ready to receive a photo', posted.some((m) => m.type === 'ready'), JSON.stringify(posted));
+    check('and only after its photo entry point exists',
+      await app.evaluate(() => typeof window.__openPhoto === 'function' && typeof window.shapeshifter === 'object'));
+    await app.locator('#chooseBtn').click();
+    posted = await app.evaluate(() => window.__posted);
     check('choosing a photo asks the app for its open panel', posted.some((m) => m.type === 'open'), JSON.stringify(posted));
 
     await app.evaluate(async () => {
