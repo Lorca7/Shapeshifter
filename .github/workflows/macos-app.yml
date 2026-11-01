@@ -15,9 +15,17 @@ permissions:
   contents: write
 
 jobs:
+  # Diagnostic: if this passes while the macOS job is cancelled, the problem is
+  # the macOS runners specifically, not GitHub Actions on this repository.
+  canary:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Actions is running on this repository."
+
   build:
-    # Sonoma, matching the macOS this app is built for.
-    runs-on: macos-14
+    # A current image. The binary still targets macOS 13+, so it runs on
+    # Sonoma 14.6 regardless of the OS it was compiled on.
+    runs-on: macos-15
 
     steps:
       - uses: actions/checkout@v4
@@ -59,18 +67,67 @@ jobs:
             exit 1
           fi
 
-      - name: Package
+      - name: Build the disk image
         run: |
-          cd build
-          ditto -c -k --sequesterRsrc --keepParent Shapeshifter.app ../Shapeshifter-macOS.zip
-          cd ..
-          shasum -a 256 Shapeshifter-macOS.zip | tee checksum.txt
+          set -euo pipefail
+          STAGE="$(mktemp -d)"
+          ditto build/Shapeshifter.app "$STAGE/Shapeshifter.app"
+
+          # Retina-aware background: one TIFF holding both resolutions.
+          tiffutil -cathidpicheck macos/dmg-background.png macos/dmg-background@2x.png \
+            -out "$RUNNER_TEMP/background.tiff"
+
+          brew install create-dmg >/dev/null 2>&1 || true
+          if command -v create-dmg >/dev/null 2>&1 && create-dmg \
+              --volname "Shapeshifter" \
+              --volicon build/Shapeshifter.app/Contents/Resources/AppIcon.icns \
+              --background "$RUNNER_TEMP/background.tiff" \
+              --window-pos 200 120 \
+              --window-size 660 400 \
+              --icon-size 112 \
+              --icon "Shapeshifter.app" 165 200 \
+              --hide-extension "Shapeshifter.app" \
+              --app-drop-link 495 200 \
+              --no-internet-enable \
+              Shapeshifter.dmg "$STAGE"; then
+            echo "Built a styled disk image."
+          else
+            # Finder scripting can fail on a headless runner. Fall back to a
+            # plain image that still has the Applications drop target.
+            echo "Styled image failed; building a plain one."
+            rm -f Shapeshifter.dmg
+            ln -s /Applications "$STAGE/Applications"
+            hdiutil create -volname Shapeshifter -srcfolder "$STAGE" -ov -format UDZO Shapeshifter.dmg
+          fi
+          ls -lh Shapeshifter.dmg
+          shasum -a 256 Shapeshifter.dmg | tee checksum.txt
+
+      - name: Test the disk image the way a person would use it
+        run: |
+          set -euo pipefail
+          MOUNT="$(hdiutil attach -nobrowse -readonly Shapeshifter.dmg | awk -F'\t' '/\/Volumes\// {print $NF}')"
+          echo "Mounted at: $MOUNT"
+          ls -la "$MOUNT"
+          test -d "$MOUNT/Shapeshifter.app"   || { echo "app missing from image"; exit 1; }
+          test -L "$MOUNT/Applications" || test -e "$MOUNT/Applications" \
+            || { echo "Applications drop target missing"; exit 1; }
+
+          # "Drag" it out, exactly as Finder would copy it, then launch the copy.
+          INSTALL="$(mktemp -d)"
+          ditto "$MOUNT/Shapeshifter.app" "$INSTALL/Shapeshifter.app"
+          hdiutil detach "$MOUNT"
+          codesign --verify --deep --strict "$INSTALL/Shapeshifter.app"
+          open "$INSTALL/Shapeshifter.app"
+          sleep 12
+          pgrep -x Shapeshifter >/dev/null || { echo "installed copy did not stay running"; exit 1; }
+          echo "The installed copy launched and is running."
+          pkill -x Shapeshifter || true
 
       - uses: actions/upload-artifact@v4
         with:
           name: Shapeshifter-macOS
           path: |
-            Shapeshifter-macOS.zip
+            Shapeshifter.dmg
             checksum.txt
           retention-days: 90
 
@@ -81,7 +138,7 @@ jobs:
         run: |
           TAG="macos-build"
           gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
-          gh release create "$TAG" Shapeshifter-macOS.zip \
+          gh release create "$TAG" Shapeshifter.dmg \
             --title "Shapeshifter for macOS" \
             --notes-file macos/RELEASE_NOTES.md
           gh release view "$TAG" --json url --jq '"Download page: " + .url'

@@ -1,28 +1,32 @@
-Universal build of **Shapeshifter.app** for macOS 13 or newer — runs on both Apple silicon and Intel Macs.
+**Shapeshifter for Mac** — outline any part of a photo and save it in that exact shape.
+
+Runs on macOS 13 or newer, on both Apple silicon and Intel Macs.
 
 ## Install
 
-1. Download `Shapeshifter-macOS.zip` below and unzip it.
-2. Drag `Shapeshifter.app` into your **Applications** folder.
-3. **Run this once in Terminal**, or macOS will refuse to open it:
+1. Download **Shapeshifter.dmg** below and double-click it.
+2. Drag **Shapeshifter** onto the **Applications** folder in the window that opens.
+3. Eject the disk image (drag it to the Trash, or click ⏏ next to it in Finder).
 
-```
-xattr -dr com.apple.quarantine /Applications/Shapeshifter.app
-```
+## The first time you open it
 
-Then open it normally from Launchpad or Applications.
+Because this app isn't registered with Apple, macOS asks you to confirm it once:
 
-That third step is needed because this app is ad-hoc signed rather than notarized
-with a paid Apple Developer account. macOS quarantines anything downloaded from the
-internet, and Gatekeeper blocks quarantined apps that are not notarized. The command
-clears that flag. Building it yourself instead — `./macos/build.sh --install` — skips
-this entirely, because locally built apps are never quarantined.
+1. Open your **Applications** folder.
+2. **Right-click** (or Control-click) **Shapeshifter** and choose **Open**.
+3. Click **Open** in the dialog that appears.
 
-## What it does
+After that it opens normally from Launchpad, the Dock, or Applications — macOS
+won't ask again.
 
-Drag a JPEG, PNG, TIFF or WebP onto the window, outline any part of it with the lasso,
-polygon, magic wand or brush, and export that shape. The exported PNG, WebP or SVG opens
-as the shape you drew rather than as a rectangle, because everything outside your outline
-is written as fully transparent and the file is cropped tight to the outline.
+If you double-clicked it first and only got a "cannot be opened" message, that's
+fine: open **System Settings › Privacy & Security**, scroll down, and click
+**Open Anyway** next to Shapeshifter.
 
-Nothing is uploaded and the app makes no network connections of any kind.
+## Using it
+
+Drag a JPEG, PNG, TIFF or WebP onto the window, outline the part you want with the
+lasso, polygon, magic wand or brush, and export. The saved PNG, WebP or SVG opens as
+the shape you drew rather than as a rectangle.
+
+Nothing is uploaded — the app makes no network connections at all.
