@@ -1,13 +1,14 @@
 // Shapeshifter for macOS.
 //
-// A native AppKit application: real window, real menu bar, real Open and Save
-// panels, real pasteboard. The editing engine itself is the same tested
-// JavaScript the web build uses, hosted in a WKWebView and served from inside
-// the app bundle over a private URL scheme.
+// A native AppKit application: a real window, menu bar, Open and Save panels.
+// The editor itself is web code hosted in a WKWebView and served from inside
+// the app bundle over a private URL scheme, so the app runs no local server and
+// makes no network connections of any kind.
 //
-// Serving over a custom scheme rather than file:// is what allows the engine's
-// ES modules to load, and it means the app needs no local web server and makes
-// no network connections of any kind.
+// Running the app with SHAPESHIFTER_SELFTEST_PHOTO and SHAPESHIFTER_SELFTEST_OUTPUT
+// set makes it open that photo, trace an outline, save through the same path the
+// Save panel uses, write the result to the output path and exit. That is how the
+// build proves the real app works, not just that it launches.
 
 import AppKit
 import UniformTypeIdentifiers
@@ -21,10 +22,9 @@ let kBridgeName = "shapeshifter"
 
 // MARK: - Handing files between Swift and the page
 
-/// Short-lived store for bytes moving between the app and the web view.
-/// Opening a photo puts its data here and the page fetches it over the app's
-/// own URL scheme, so a 40-megapixel TIFF never has to cross the bridge as a
-/// base64 string.
+/// Short-lived store for a photo on its way into the page. The page fetches it
+/// over the app's own URL scheme, so a large photo never has to cross the
+/// bridge as a base64 string.
 final class TransferStore {
     private var items: [String: (data: Data, mime: String)] = [:]
     private let lock = NSLock()
@@ -64,7 +64,6 @@ final class AssetSchemeHandler: NSObject, WKURLSchemeHandler {
         var path = url.path
         if path.isEmpty || path == "/" { path = "/index.html" }
 
-        // A one-shot handoff of a file the user just opened.
         if path.hasPrefix("/__transfer/") {
             let id = String(path.dropFirst("/__transfer/".count))
             guard let item = transfers.take(id) else {
@@ -123,9 +122,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     private var window: NSWindow!
     private var webView: WKWebView!
     private let transfers = TransferStore()
-    /// Files asked for before the editor had finished loading.
+    /// Photos asked for before the editor had finished loading.
     private var queuedFiles: [URL] = []
     private var ready = false
+
+    private let environment = ProcessInfo.processInfo.environment
+    private var selfTestPhoto: String? { environment["SHAPESHIFTER_SELFTEST_PHOTO"] }
+    private var selfTestOutput: String? { environment["SHAPESHIFTER_SELFTEST_OUTPUT"] }
+    private var isSelfTest: Bool { selfTestPhoto != nil && selfTestOutput != nil }
 
     // MARK: Launch
 
@@ -144,35 +148,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         if #available(macOS 13.3, *) { webView.isInspectable = true }
 
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1340, height: 860),
+            contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false)
         window.title = kAppName
-        window.minSize = NSSize(width: 960, height: 620)
+        window.minSize = NSSize(width: 820, height: 560)
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = NSColor(calibratedRed: 0.06, green: 0.07, blue: 0.09, alpha: 1)
         window.isReleasedWhenClosed = false
         window.contentView = webView
         window.center()
-        // Setting the autosave name restores a previously saved frame, so this
-        // has to come after center(): centred on first run, remembered after.
+        // Restores a saved frame, so this comes after center(): centred on the
+        // first run, remembered after that.
         window.setFrameAutosaveName("ShapeshifterMainWindow")
         window.makeKeyAndOrderFront(nil)
 
         buildMenu()
-
-        let start = URL(string: "\(kScheme)://\(kHost)/index.html")!
-        webView.load(URLRequest(url: start))
-
+        webView.load(URLRequest(url: URL(string: "\(kScheme)://\(kHost)/index.html")!))
         NSApp.activate(ignoringOtherApps: true)
+
+        if isSelfTest {
+            // If anything below stalls, fail loudly instead of hanging the build.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
+                self?.finishSelfTest(ok: false, "timed out before a cutout was saved")
+            }
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
-    /// Files dropped on the Dock icon, or opened with "Open With".
+    /// Photos dropped on the Dock icon, or opened with "Open With".
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls { open(fileURL: url) }
     }
@@ -186,7 +194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         mainMenu.addItem(appItem)
         let appMenu = NSMenu()
         _ = appMenu.addItem(withTitle: "About \(kAppName)",
-                        action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+                            action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
         _ = appMenu.addItem(withTitle: "Hide \(kAppName)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         let hideOthers = appMenu.addItem(withTitle: "Hide Others",
@@ -201,9 +209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         mainMenu.addItem(fileItem)
         let fileMenu = NSMenu(title: "File")
         add(to: fileMenu, "Open Photo…", #selector(openDocument(_:)), "o")
-        fileMenu.addItem(.separator())
-        add(to: fileMenu, "Export Shape…", #selector(exportShape(_:)), "e")
-        add(to: fileMenu, "Copy Cut-Out", #selector(copyCutout(_:)), "c", [.command, .shift])
+        add(to: fileMenu, "Save Cutout…", #selector(saveCutout(_:)), "s")
         fileMenu.addItem(.separator())
         _ = fileMenu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         fileItem.submenu = fileMenu
@@ -214,9 +220,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         add(to: editMenu, "Undo", #selector(undoEdit(_:)), "z")
         add(to: editMenu, "Redo", #selector(redoEdit(_:)), "z", [.command, .shift])
         editMenu.addItem(.separator())
-        add(to: editMenu, "Select All", #selector(selectAllShape(_:)), "a")
-        add(to: editMenu, "Deselect", #selector(deselectShape(_:)), "d")
-        add(to: editMenu, "Invert Selection", #selector(invertShape(_:)), "i")
+        add(to: editMenu, "Start Over", #selector(startOver(_:)), "")
         editItem.submenu = editMenu
 
         let viewItem = NSMenuItem()
@@ -224,7 +228,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         let viewMenu = NSMenu(title: "View")
         add(to: viewMenu, "Zoom In", #selector(zoomIn(_:)), "+")
         add(to: viewMenu, "Zoom Out", #selector(zoomOut(_:)), "-")
-        add(to: viewMenu, "Actual Size", #selector(actualSize(_:)), "1")
         add(to: viewMenu, "Fit to Window", #selector(fitToWindow(_:)), "0")
         viewMenu.addItem(.separator())
         let full = viewMenu.addItem(withTitle: "Enter Full Screen",
@@ -232,21 +235,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         full.keyEquivalentModifierMask = [.command, .control]
         viewItem.submenu = viewMenu
 
-        let helpItem = NSMenuItem()
-        mainMenu.addItem(helpItem)
-        let helpMenu = NSMenu(title: "Help")
-        add(to: helpMenu, "Keyboard Shortcuts", #selector(showShortcuts(_:)), "?")
-        helpItem.submenu = helpMenu
-
         NSApp.mainMenu = mainMenu
-        NSApp.helpMenu = helpMenu
     }
 
     @discardableResult
     private func add(to menu: NSMenu, _ title: String, _ action: Selector, _ key: String,
                      _ modifiers: NSEvent.ModifierFlags = [.command]) -> NSMenuItem {
         let item = menu.addItem(withTitle: title, action: action, keyEquivalent: key)
-        item.keyEquivalentModifierMask = modifiers
+        item.keyEquivalentModifierMask = key.isEmpty ? [] : modifiers
         item.target = self
         return item
     }
@@ -254,18 +250,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     // MARK: Menu actions
 
     @objc func openDocument(_ sender: Any?) { presentOpenPanel() }
-    @objc func exportShape(_ sender: Any?) { run("window.shapeshifter.editor.export()") }
-    @objc func copyCutout(_ sender: Any?) { run("window.shapeshifter.editor.copyToClipboard()") }
-    @objc func undoEdit(_ sender: Any?) { run("window.shapeshifter.editor.undo()") }
-    @objc func redoEdit(_ sender: Any?) { run("window.shapeshifter.editor.redo()") }
-    @objc func selectAllShape(_ sender: Any?) { run("window.shapeshifter.editor.selectAll()") }
-    @objc func deselectShape(_ sender: Any?) { run("window.shapeshifter.editor.selectNone()") }
-    @objc func invertShape(_ sender: Any?) { run("window.shapeshifter.editor.invert()") }
-    @objc func zoomIn(_ sender: Any?) { run("window.shapeshifter.editor.zoomBy(1.25)") }
-    @objc func zoomOut(_ sender: Any?) { run("window.shapeshifter.editor.zoomBy(0.8)") }
-    @objc func actualSize(_ sender: Any?) { run("window.shapeshifter.editor.setZoom(1)") }
-    @objc func fitToWindow(_ sender: Any?) { run("window.shapeshifter.editor.fit()") }
-    @objc func showShortcuts(_ sender: Any?) { run("document.getElementById('helpDialog').showModal()") }
+    @objc func saveCutout(_ sender: Any?) { run("window.shapeshifter.save()") }
+    @objc func undoEdit(_ sender: Any?) { run("window.shapeshifter.undo()") }
+    @objc func redoEdit(_ sender: Any?) { run("window.shapeshifter.redo()") }
+    @objc func startOver(_ sender: Any?) { run("window.shapeshifter.startOver()") }
+    @objc func zoomIn(_ sender: Any?) { run("window.shapeshifter.zoomBy(1.4)") }
+    @objc func zoomOut(_ sender: Any?) { run("window.shapeshifter.zoomBy(0.7)") }
+    @objc func fitToWindow(_ sender: Any?) { run("window.shapeshifter.fit()") }
 
     // MARK: Messages from the page
 
@@ -278,18 +269,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             guard let name = body["filename"] as? String,
                   let encoded = body["data"] as? String,
                   let data = Data(base64Encoded: encoded) else { return }
-            presentSavePanel(data: data, suggestedName: name)
-        case "clipboard":
-            guard let encoded = body["data"] as? String,
-                  let data = Data(base64Encoded: encoded) else { return }
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            // PNG keeps the transparency exactly; TIFF is there for the apps
-            // that only look for it.
-            pasteboard.setData(data, forType: .png)
-            if let tiff = NSImage(data: data)?.tiffRepresentation {
-                pasteboard.setData(tiff, forType: .tiff)
+            if let output = selfTestOutput {
+                finishSelfTestSave(data: data, to: output)
+            } else {
+                presentSavePanel(data: data, suggestedName: name)
             }
+        case "log":
+            if isSelfTest, let text = body["message"] as? String { print("page: \(text)") }
         default:
             break
         }
@@ -299,7 +285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     private func presentOpenPanel() {
         let panel = NSOpenPanel()
-        panel.title = "Open a photo"
+        panel.title = "Choose a photo"
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         var types: [UTType] = [.jpeg, .png, .tiff]
@@ -313,16 +299,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     private func presentSavePanel(data: Data, suggestedName: String) {
         let panel = NSSavePanel()
-        panel.title = "Export the shape"
+        panel.title = "Save the cutout"
         panel.nameFieldStringValue = suggestedName
         panel.canCreateDirectories = true
-        let ext = (suggestedName as NSString).pathExtension
-        if let type = UTType(filenameExtension: ext) { panel.allowedContentTypes = [type] }
+        panel.allowedContentTypes = [.png]
         panel.beginSheetModal(for: window) { [weak self] response in
-            guard let self, response == .OK, let url = panel.url else { return }
+            guard let self else { return }
+            guard response == .OK, let url = panel.url else {
+                self.report("Not saved. Your outline is still here.")
+                return
+            }
             do {
                 try data.write(to: url, options: .atomic)
-                self.report("Saved \(url.lastPathComponent) to \(url.deletingLastPathComponent().lastPathComponent).")
+                self.report("Saved \(url.lastPathComponent).")
             } catch {
                 self.report("Could not save the file: \(error.localizedDescription)", isError: true)
             }
@@ -336,7 +325,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             queuedFiles.append(fileURL)
             return
         }
-        // Sandboxed or not, a file picked by the user may need explicit access.
         let scoped = fileURL.startAccessingSecurityScopedResource()
         defer { if scoped { fileURL.stopAccessingSecurityScopedResource() } }
 
@@ -346,7 +334,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
         let mime = AssetSchemeHandler.mimeType(for: fileURL.pathExtension)
         let id = transfers.put(data, mime: mime)
-        run("window.__shapeshifterOpenTransfer(\(quote(id)), \(quote(fileURL.lastPathComponent)), \(quote(mime)))")
+        run("window.__openTransfer(\(quote(id)), \(quote(fileURL.lastPathComponent)), \(quote(mime)))")
     }
 
     // MARK: Navigation policy
@@ -356,6 +344,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         let pending = queuedFiles
         queuedFiles.removeAll()
         for url in pending { open(fileURL: url) }
+
+        if let photo = selfTestPhoto, isSelfTest {
+            open(fileURL: URL(fileURLWithPath: photo))
+            pollForPhoto(attempt: 0)
+        }
     }
 
     func webView(_ webView: WKWebView,
@@ -365,7 +358,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             decisionHandler(.allow)
             return
         }
-        // A photo dragged into the window that the page did not consume would
+        // A photo dropped on the window that the page did not take would
         // otherwise navigate away from the editor. Open it instead.
         if url.isFileURL {
             decisionHandler(.cancel)
@@ -376,7 +369,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             decisionHandler(.allow)
             return
         }
-        // Anything else is an outside link: hand it to the default browser.
         if navigationAction.navigationType == .linkActivated {
             NSWorkspace.shared.open(url)
             decisionHandler(.cancel)
@@ -385,15 +377,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         decisionHandler(.allow)
     }
 
+    // MARK: Self-test
+
+    private func pollForPhoto(attempt: Int) {
+        webView.evaluateJavaScript("Boolean(window.shapeshifter) && window.shapeshifter.state().loaded") { [weak self] result, _ in
+            guard let self else { return }
+            if (result as? NSNumber)?.boolValue == true {
+                // A 12-sided outline around the magenta disc in the test photo.
+                let points = (0..<12).map { i -> String in
+                    let angle = Double(i) / 12 * 2 * Double.pi
+                    return String(format: "[%.3f,%.3f]", 100 + 36 * cos(angle), 75 + 36 * sin(angle))
+                }.joined(separator: ",")
+                self.run("window.shapeshifter.trace([\(points)]); window.shapeshifter.save()")
+            } else if attempt < 80 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { self.pollForPhoto(attempt: attempt + 1) }
+            } else {
+                self.finishSelfTest(ok: false, "the photo never opened in the app")
+            }
+        }
+    }
+
+    private func finishSelfTestSave(data: Data, to path: String) {
+        let pngSignature: [UInt8] = [0x89, 0x50, 0x4E, 0x47]
+        guard data.count > 100, Array(data.prefix(4)) == pngSignature else {
+            finishSelfTest(ok: false, "the app produced something that is not a PNG (\(data.count) bytes)")
+            return
+        }
+        do {
+            try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+            finishSelfTest(ok: true, "opened a photo, traced an outline and saved a \(data.count)-byte PNG")
+        } catch {
+            finishSelfTest(ok: false, "could not write the result: \(error.localizedDescription)")
+        }
+    }
+
+    private func finishSelfTest(ok: Bool, _ message: String) {
+        let line = (ok ? "SELFTEST PASS: " : "SELFTEST FAIL: ") + message + "\n"
+        FileHandle.standardOutput.write(Data(line.utf8))
+        exit(ok ? 0 : 1)
+    }
+
     // MARK: Talking to the page
 
     private func run(_ script: String) {
         webView.evaluateJavaScript(script, completionHandler: nil)
     }
 
-    /// Show a message on the editor's own status bar.
+    /// Show a message in the editor's own hint line.
     private func report(_ message: String, isError: Bool = false) {
-        run("window.shapeshifter.editor.setStatus(\(quote(message)), \(quote(isError ? "error" : "")))")
+        run("window.shapeshifter.setHint(\(quote(message)), \(quote(isError ? "error" : "")))")
     }
 
     /// JSON-quote a string so it is safe to paste into a script.

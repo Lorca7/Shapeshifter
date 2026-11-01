@@ -1,199 +1,87 @@
 # Shapeshifter
 
-Drag in a photo, outline any part of it, and export **that shape** — not a rectangle
-containing it.
+Trace an object in a photo, erase everything else, and save it in its own shape.
 
-A photo file is always a rectangle of pixels. Shapeshifter crops that rectangle tight to
-the outline you draw and writes every pixel outside the outline as fully transparent, so
-the file opens as the shape you drew in Preview, Photoshop, Figma, Keynote, a browser, or
-anything else that understands transparency. Export as SVG and the outline is written as a
-real vector clip path as well, so the shape stays crisp at any size and can be edited as a
-path.
+A picture file is always a rectangle of pixels. Shapeshifter crops that rectangle tight
+around your outline and makes every pixel outside it fully transparent, so the saved PNG
+opens as the shape you traced, in Preview, Keynote, Figma, a browser, or anything else that
+understands transparency.
 
-Shapeshifter is a **native macOS app**. It has no dependencies, makes no network
-connections of any kind, and your photo never leaves your Mac.
+Nothing is uploaded. The Mac app makes no network connections at all.
 
-## Install on macOS
+## Install on a Mac
 
 **[Download Shapeshifter.dmg](https://github.com/Lorca7/Shapeshifter/releases/latest/download/Shapeshifter.dmg)**
-— macOS 13 or newer, Apple silicon or Intel.
+(macOS 13 or newer, Apple silicon or Intel).
 
 1. Double-click the downloaded `Shapeshifter.dmg`.
-2. Drag **Shapeshifter** onto the **Applications** folder in the window that opens.
-3. The first time only: in Applications, **right-click Shapeshifter › Open**, then click
-   **Open**. After that it opens normally from Launchpad or the Dock.
+2. Drag **Shapeshifter** onto the **Applications** folder.
+3. The first time only: in Applications, **right-click Shapeshifter › Open**, then click **Open**.
+   (The app isn't notarized with a paid Apple Developer account, so macOS asks you to confirm
+   it once. If you double-clicked it and got a "cannot be opened" message, go to
+   **System Settings › Privacy & Security** and click **Open Anyway**.)
 
-That one-time step is because the app is not notarized with a paid Apple Developer
-account, so macOS asks you to confirm it once. If you double-clicked it first and got a
-"cannot be opened" message, go to **System Settings › Privacy & Security** and click
-**Open Anyway**.
+To uninstall, drag Shapeshifter from Applications to the Trash.
 
-Once installed you can open a photo by dragging it onto the window or the Dock icon, with
-**⌘O**, or by right-clicking any image in Finder and choosing *Open With › Shapeshifter*.
-Exports go through a normal macOS save panel, and **⇧⌘C** puts the cut-out on the
-clipboard as a transparent PNG.
+## Using it
 
-The disk image is rebuilt by GitHub Actions (`.github/workflows/macos-app.yml`) whenever the
-app changes. Each build is compiled as a universal binary, mounted, copied out the way
-Finder would copy it, and launched before it is published.
+1. Drop a photo on the window. JPEG, PNG and TIFF work.
+2. **Click along the edge** of the object to drop points. Zoom in as far as you like for precision.
+3. **Click the first point** (it turns large and green) to close the outline. Everything outside it is erased.
+4. **Drag a point** to fine-tune it, or **click an edge** to add a point there. **Delete** removes the point under the cursor.
+5. **Save cutout.**
 
-### Building it yourself
+| To do this | Do this |
+| --- | --- |
+| Zoom | Pinch, or the **+** / **−** buttons, or the **+** / **−** keys |
+| Move around | Two-finger scroll, or drag empty space, or hold **Space** and drag |
+| Fit the photo in the window | **Fit**, or **0** |
+| Undo / redo | **⌘Z** / **⇧⌘Z** |
+| Start over | **Start over** (this can be undone too) |
 
-Needs the Xcode Command Line Tools (`xcode-select --install`; full Xcode is not required):
+Points can be dragged right to the photo's edge, and clicks outside the photo are held to it.
+
+## Building it yourself
+
+You only need this to change the app. It needs the Xcode Command Line Tools
+(`xcode-select --install`; full Xcode isn't required):
 
 ```bash
 ./macos/build.sh --install
 ```
 
-A locally built app is never quarantined, so it skips the right-click › Open step.
-
-### If you would rather not build anything
-
-Double-click `run-local.command`. It serves the same editor to your default browser from
-your own machine — no compiler needed, though it does need Node or Python 3 installed.
-Everything still stays local.
-
-### Running it as a web page
-
-```bash
-npm start          # http://localhost:5173
-```
-
-(Or serve the folder any other way — `python3 -m http.server`. Opening `index.html`
-directly off disk will *not* work, because ES modules are blocked on `file://`.)
-
-## What it does
-
-**Reads** JPEG, PNG, TIFF and WebP. Browsers cannot decode TIFF, so Shapeshifter ships its
-own baseline TIFF decoder: little- and big-endian, strips and tiles, 1/8/16 bits per
-sample, grayscale, palette, RGB, RGBA and CMYK, uncompressed, LZW, PackBits or Deflate,
-with horizontal differencing prediction.
-
-**Outlines** with seven tools, which all write into one shared alpha mask — so you can
-rough something in with the magic wand, tidy the edge with the brush, and cut a hole out
-with the polygon, and it is all one shape:
-
-| Tool | Key | For |
-| --- | --- | --- |
-| Freehand lasso | <kbd>L</kbd> | Tracing around something by hand |
-| Polygon | <kbd>P</kbd> | Straight-edged shapes, one corner per click |
-| Rectangle / Ellipse | <kbd>R</kbd> / <kbd>E</kbd> | Regular shapes; hold <kbd>Shift</kbd> to constrain |
-| Brush | <kbd>B</kbd> | Painting the selection in or out by hand |
-| Magic wand | <kbd>W</kbd> | Clicking an object or a flat background to select it |
-| Pan | <kbd>H</kbd> | Moving around; hold <kbd>Space</kbd> with any tool |
-
-Hold <kbd>Shift</kbd> while drawing to add to the selection, <kbd>Alt</kbd> to subtract,
-or both to intersect.
-
-**Refines** the edge: feather it, grow or shrink it by a true Euclidean distance (so
-corners stay round rather than turning square), invert it, undo and redo.
-
-**Exports** as:
-
-| Format | Shape comes from |
-| --- | --- |
-| **PNG** | Real alpha. The safest choice — opens as the shape everywhere. |
-| **WebP** | Real alpha, much smaller files. |
-| **SVG** | A vector `<clipPath>` traced from your outline, plus the cropped raster inside it. |
-| **JPEG** | JPEG has no transparency, so the outside is filled with a matte colour you pick. |
-| **Mask PNG** | The outline on its own, as a white-on-transparent stencil. |
-
-…with options for scale, transparent padding, a stroked outline along the shape's edge, a
-background fill, and whether to crop to the shape or keep the original canvas.
+To try the editor in a browser instead, run `npm start` and open http://localhost:5173.
 
 ## How it works
 
 ```
-macos/
-  Sources/main.swift  the Mac app: window, menus, Open/Save panels, pasteboard
-  build.sh            compiles Shapeshifter.app and bundles the editor into it
-  Info.plist          bundle metadata, including the image types it can open
-js/
-  native.js         the bridge to the Mac shell; inert in a plain browser
-  app.js            UI wiring, keyboard, file lifecycle, the scripting surface
-  mask.js           the selection: one 8-bit alpha value per pixel, plus feather/grow/shrink
-  contour.js        traces a mask back into closed vector paths (marching triangles + RDP)
-  tools.js          the seven tools; each builds a shape and stamps it into the mask
-  wand.js           scanline flood fill by colour distance
-  export.js         crops, cuts, and writes the finished file
-  render.js         canvas drawing, marching ants, live cut-out preview
-  view.js           zoom and pan — the only screen/image coordinate conversion
-  history.js        bounded undo/redo over mask snapshots
-  decode/tiff.js    baseline TIFF decoder
-  decode/image.js   format sniffing and loading
+js/app.js          the editor: placing, dragging and removing points, zoom and pan, undo
+js/render.js       drawing the photo, the outline and the erased look
+js/export.js       cropping to the outline and writing the PNG
+js/native.js       the one place that knows if it is the Mac app or a web page
+js/decode/         loading JPEG, PNG and TIFF (TIFF is decoded by hand)
+macos/             the Mac app: window, menus, Open and Save panels
 ```
 
-Two decisions carry most of the weight:
-
-**One mask, not many shapes.** Every tool rasterizes into a single 8-bit buffer the size of
-the photo. That is why tools combine freely, why feathering and growing are simple array
-maths, and why the export is nearly free: the mask *is* the alpha channel the file needs.
-
-**Contours are traced, not remembered.** For the on-screen outline and the SVG clip path,
-the mask is re-traced into closed polygons by splitting each pixel cell into two triangles
-and contouring those. Unlike marching squares it has no ambiguous saddle cases, so loops
-always close — including holes, which come out as separate rings and render correctly under
-the even-odd fill rule.
-
-Compositing happens at viewport resolution rather than image resolution, so previewing the
-cut-out of a 40-megapixel photo costs a screen's worth of memory instead of a photo's worth.
-
-**The Mac app is a real app, not a wrapped website.** `main.swift` provides the window,
-menu bar, `NSOpenPanel`/`NSSavePanel` and `NSPasteboard`; the editing engine runs in a
-`WKWebView` and is served from inside the app bundle over a private `shapeshifter://` URL
-scheme. Using a custom scheme rather than `file://` is what lets the engine's ES modules
-load, and it means the app needs no local server and opens no sockets. Opening a photo
-hands the bytes to the page through a one-shot transfer the scheme handler serves, so a
-large TIFF never has to cross the bridge base64-encoded.
-
-## Scripting it
-
-The editor exposes `window.shapeshifter` for the console and for tests:
-
-```js
-await shapeshifter.openUrl('/test/fixtures/photo.png', 'photo.png');
-shapeshifter.selectEllipse(100, 75, 60, 45);
-shapeshifter.selectRect(80, 60, 30, 30, 'subtract');   // punch a hole
-const { blob, filename } = await shapeshifter.exportBlob({ format: 'svg' });
-```
-
-Also available: `selectPolygon(points, mode)`, `wandAt(x, y, opts)`, `setExportOptions`,
-`exportDataUrl`, and `state()`.
+The outline is applied as a clipping path at the photo's full resolution, so the saved edge is
+smooth and antialiased rather than a stair-step of pixels. The Mac app is a native AppKit window
+hosting the same editor in a `WKWebView`, served from inside the app over a private URL scheme.
 
 ## Tests
 
 ```bash
-npm test                      # all three suites
-npm run test:editor           # 68 checks in a real browser
-node test/smoke.mjs --headed  # watch them happen
+npm test                          # contract + bundle checks, then the editor in Chromium
+BROWSER=webkit node test/smoke.mjs   # the editor in WebKit, the engine the Mac app uses
 ```
 
-`test/smoke.mjs` decodes the files Shapeshifter actually produces and asserts on their
-pixels — that an exported ellipse has four transparent corners and covers π/4 of its file,
-that a subtracted region is a transparent hole, that the TIFF decoder agrees with the
-browser's own PNG decode to the byte, that padding adds transparent margin, that JPEG comes
-out fully opaque. Outputs land in `test/output/` so you can open them yourself.
+The editor tests use real mouse clicks and drags, then open the PNG that gets saved and check
+its pixels: cropped to the outline, transparent outside it, colours untouched inside it.
 
-`test/check-bundle.mjs` assembles the payload that goes inside `Shapeshifter.app` exactly
-as `build.sh` does, serves it with the same path and MIME rules the Swift implements, and
-checks the editor boots from the bundle alone and makes no network requests at all.
-
-`test/check-bridge.mjs` cross-checks the Swift against the page it drives. The shell calls
-JavaScript by name and reads message fields the page posts, and neither language can catch
-a rename on the other side, so this verifies the contract directly.
+Every push also builds the Mac app on GitHub's macOS machines, installs it from the disk image,
+and runs the installed app against a test photo. The app opens the photo, traces an outline, saves
+through the same path as the Save panel, and the result is checked from outside the app.
 
 Requires Playwright (`npm install -D playwright && npx playwright install chromium`).
-
-## Limitations
-
-- TIFFs using JPEG or CCITT fax compression are rejected with a message saying so; re-save
-  as uncompressed, LZW or Deflate. Floating-point and BigTIFF are not supported.
-- Images above roughly 64 megapixels are refused rather than risking the tab's memory.
-- The magic wand matches on colour distance alone. For a subject against a busy background,
-  rough it in with the wand and clean up with the brush.
-- Export is limited to PNG, JPEG and WebP encoding. There is no AVIF or TIFF output.
-- The Mac app builds for the architecture of the Mac that builds it, which is what you want
-  for your own machine but means the `.app` is not universal.
 
 ## Licence
 

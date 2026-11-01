@@ -8,6 +8,7 @@ on:
       - "js/**"
       - "css/**"
       - "index.html"
+      - "test/**"
       - ".github/workflows/macos-app.yml"
   workflow_dispatch:
 
@@ -15,25 +16,21 @@ permissions:
   contents: write
 
 jobs:
-  # Diagnostic: if this passes while the macOS job is cancelled, the problem is
-  # the macOS runners specifically, not GitHub Actions on this repository.
-  canary:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Actions is running on this repository."
-
   build:
     # A current image. The binary still targets macOS 13+, so it runs on
     # Sonoma 14.6 regardless of the OS it was compiled on.
     runs-on: macos-15
+    timeout-minutes: 25
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Show toolchain
+      # The Mac app uses WebKit, so test the editor in WebKit with real mouse input.
+      - name: Test the editor in WebKit
         run: |
-          sw_vers
-          swiftc --version
+          npm install --no-save --no-audit --no-fund playwright
+          npx playwright install webkit
+          BROWSER=webkit node test/smoke.mjs
 
       - name: Build Shapeshifter.app (universal)
         env:
@@ -44,28 +41,14 @@ jobs:
         run: |
           APP=build/Shapeshifter.app
           test -x "$APP/Contents/MacOS/Shapeshifter" || { echo "no executable"; exit 1; }
-          test -f "$APP/Contents/Info.plist"          || { echo "no Info.plist"; exit 1; }
           test -f "$APP/Contents/Resources/web/index.html" || { echo "editor missing"; exit 1; }
-          test -f "$APP/Contents/Resources/AppIcon.icns"   || echo "note: no icon"
           plutil -lint "$APP/Contents/Info.plist"
-          echo "Architectures: $(lipo -archs "$APP/Contents/MacOS/Shapeshifter")"
-          lipo -archs "$APP/Contents/MacOS/Shapeshifter" | grep -q arm64  || { echo "missing arm64";  exit 1; }
-          lipo -archs "$APP/Contents/MacOS/Shapeshifter" | grep -q x86_64 || { echo "missing x86_64"; exit 1; }
+          ARCHS="$(lipo -archs "$APP/Contents/MacOS/Shapeshifter")"
+          echo "Architectures: $ARCHS"
+          echo "$ARCHS" | grep -q arm64  || { echo "missing arm64";  exit 1; }
+          echo "$ARCHS" | grep -q x86_64 || { echo "missing x86_64"; exit 1; }
           codesign --verify --deep --strict --verbose=2 "$APP"
           du -sh "$APP"
-
-      - name: Smoke-test that it launches
-        run: |
-          APP=build/Shapeshifter.app
-          open "$APP"
-          sleep 12
-          if pgrep -x Shapeshifter >/dev/null; then
-            echo "Shapeshifter launched and is running."
-            osascript -e 'tell application "Shapeshifter" to quit' 2>/dev/null || pkill -x Shapeshifter || true
-          else
-            echo "Shapeshifter did not stay running."
-            exit 1
-          fi
 
       - name: Build the disk image
         run: |
@@ -102,26 +85,39 @@ jobs:
           ls -lh Shapeshifter.dmg
           shasum -a 256 Shapeshifter.dmg | tee checksum.txt
 
-      - name: Test the disk image the way a person would use it
+      - name: Install from the disk image, then test the installed app
         run: |
           set -euo pipefail
           MOUNT="$(hdiutil attach -nobrowse -readonly Shapeshifter.dmg | awk -F'\t' '/\/Volumes\// {print $NF}')"
           echo "Mounted at: $MOUNT"
           ls -la "$MOUNT"
-          test -d "$MOUNT/Shapeshifter.app"   || { echo "app missing from image"; exit 1; }
-          test -L "$MOUNT/Applications" || test -e "$MOUNT/Applications" \
-            || { echo "Applications drop target missing"; exit 1; }
+          test -d "$MOUNT/Shapeshifter.app" || { echo "app missing from image"; exit 1; }
+          test -e "$MOUNT/Applications"     || { echo "Applications drop target missing"; exit 1; }
 
-          # "Drag" it out, exactly as Finder would copy it, then launch the copy.
+          # "Drag" it out, exactly as Finder would copy it.
           INSTALL="$(mktemp -d)"
           ditto "$MOUNT/Shapeshifter.app" "$INSTALL/Shapeshifter.app"
           hdiutil detach "$MOUNT"
           codesign --verify --deep --strict "$INSTALL/Shapeshifter.app"
+
+          # 1. It launches the way a double-click launches it.
           open "$INSTALL/Shapeshifter.app"
-          sleep 12
+          sleep 10
           pgrep -x Shapeshifter >/dev/null || { echo "installed copy did not stay running"; exit 1; }
-          echo "The installed copy launched and is running."
           pkill -x Shapeshifter || true
+          sleep 2
+
+          # 2. It does the actual job. The app opens a photo, traces an outline,
+          #    saves through the same path as the Save panel and exits.
+          SHAPESHIFTER_SELFTEST_PHOTO="$PWD/test/fixtures/photo.png" \
+          SHAPESHIFTER_SELFTEST_OUTPUT="$RUNNER_TEMP/app-cutout.png" \
+            "$INSTALL/Shapeshifter.app/Contents/MacOS/Shapeshifter" | tee "$RUNNER_TEMP/selftest.log"
+          grep -q "SELFTEST PASS" "$RUNNER_TEMP/selftest.log"
+
+          # 3. The file it saved really is the shape that was traced.
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet pillow
+          "$RUNNER_TEMP/venv/bin/python" test/verify-cutout.py "$RUNNER_TEMP/app-cutout.png"
 
       - uses: actions/upload-artifact@v4
         with:

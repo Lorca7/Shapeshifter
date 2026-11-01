@@ -1,28 +1,21 @@
 {
   "name": "shapeshifter",
   "version": "1.0.0",
-  "description": "Outline any part of a photo and export it in that exact shape - PNG/WebP with real transparency, or SVG with a vector clip path. Runs as a native macOS app or in a browser.",
+  "description": "Trace an object in a photo, erase everything else, and save it in its own shape. A Mac app and a web page.",
   "type": "module",
   "scripts": {
     "start": "node serve.js",
-    "dev": "node serve.js",
     "build:mac": "bash macos/build.sh",
     "install:mac": "bash macos/build.sh --install",
-    "test": "node test/check-bridge.mjs && node test/check-bundle.mjs && node test/smoke.mjs",
-    "test:editor": "node test/smoke.mjs",
-    "test:bridge": "node test/check-bridge.mjs",
-    "test:bundle": "node test/check-bundle.mjs"
+    "test": "node test/check-bridge.mjs && node test/check-bundle.mjs && node test/smoke.mjs"
   },
   "keywords": [
+    "cutout",
+    "background-removal",
     "image-editor",
     "macos",
-    "lasso",
-    "magic-wand",
-    "alpha-mask",
     "png",
-    "tiff",
-    "svg",
-    "cutout"
+    "tiff"
   ],
   "license": "MIT",
   "private": true,

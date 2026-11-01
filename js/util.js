@@ -1,75 +1,30 @@
-// Small shared helpers. No dependencies anywhere in this project.
+// Small shared helpers.
 
-export const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+export const $ = (selector, root = document) => root.querySelector(selector);
 
-export const $ = (sel, root = document) => root.querySelector(sel);
-export const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+export const clamp = (value, low, high) => (value < low ? low : value > high ? high : value);
 
-export function el(tag, attrs = {}, ...children) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === 'class') node.className = v;
-    else if (k === 'text') node.textContent = v;
-    else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
-    else if (v !== null && v !== undefined) node.setAttribute(k, v);
-  }
-  for (const c of children.flat()) if (c != null) node.append(c);
-  return node;
+export function makeCanvas(width, height) {
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, width | 0);
+  canvas.height = Math.max(1, height | 0);
+  return canvas;
 }
 
-export function debounce(fn, ms) {
-  let t = 0;
-  return (...args) => {
-    clearTimeout(t);
-    t = setTimeout(() => fn(...args), ms);
-  };
-}
-
-export function formatBytes(n) {
-  if (!Number.isFinite(n)) return '—';
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1048576).toFixed(2)} MB`;
-}
-
-/**
- * Deliver a finished file to the user. In the macOS app this opens a real save
- * panel; in a browser it falls back to a download.
- */
-export function downloadBlob(blob, filename) {
-  const native = globalThis.__shapeshifterNative;
-  if (native?.save) {
-    native.save(blob, filename);
-    return;
-  }
-  const url = URL.createObjectURL(blob);
-  const a = Object.assign(document.createElement('a'), { href: url, download: filename });
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
-}
-
-/** Strip the extension from a filename, keeping any dots inside the stem. */
-export function baseName(name = 'image') {
-  const i = name.lastIndexOf('.');
-  return (i > 0 ? name.slice(0, i) : name) || 'image';
-}
-
-/** Promise-based canvas.toBlob. */
-export function canvasToBlob(canvas, type, quality) {
+export function canvasToBlob(canvas, type) {
   return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (b) => (b ? resolve(b) : reject(new Error(`Could not encode ${type}`))),
-      type,
-      quality,
-    );
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not create the image file.'))), type);
   });
 }
 
-export function makeCanvas(w, h) {
-  const c = document.createElement('canvas');
-  c.width = Math.max(1, w | 0);
-  c.height = Math.max(1, h | 0);
-  return c;
+/** Strip the extension from a filename, keeping any dots inside the name. */
+export function baseName(name = 'photo') {
+  const dot = name.lastIndexOf('.');
+  return (dot > 0 ? name.slice(0, dot) : name) || 'photo';
+}
+
+export function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1048576).toFixed(1)} MB`;
 }
