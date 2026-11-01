@@ -32,8 +32,16 @@ export function formatBytes(n) {
   return `${(n / 1048576).toFixed(2)} MB`;
 }
 
-/** Trigger a browser download for a Blob. */
+/**
+ * Deliver a finished file to the user. In the macOS app this opens a real save
+ * panel; in a browser it falls back to a download.
+ */
 export function downloadBlob(blob, filename) {
+  const native = globalThis.__shapeshifterNative;
+  if (native?.save) {
+    native.save(blob, filename);
+    return;
+  }
   const url = URL.createObjectURL(blob);
   const a = Object.assign(document.createElement('a'), { href: url, download: filename });
   document.body.append(a);

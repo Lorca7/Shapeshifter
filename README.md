@@ -10,8 +10,44 @@ anything else that understands transparency. Export as SVG and the outline is wr
 real vector clip path as well, so the shape stays crisp at any size and can be edited as a
 path.
 
-Everything runs in the browser. No build step, no dependencies, no server round-trip —
-your photo never leaves the tab.
+Shapeshifter is a **native macOS app**. It has no dependencies, makes no network
+connections of any kind, and your photo never leaves your Mac.
+
+## Install on macOS
+
+Needs macOS 13 or newer, and the Xcode Command Line Tools for the compiler. If you do
+not already have them, macOS will offer to install them when you run this (full Xcode is
+not required):
+
+```bash
+xcode-select --install
+```
+
+Then, from this folder:
+
+```bash
+./macos/build.sh --install
+```
+
+That compiles `Shapeshifter.app`, drops it in `/Applications`, and it shows up in
+Launchpad. Build without installing with `./macos/build.sh`, or build and launch in one
+step with `./macos/build.sh --run`.
+
+The app is ad-hoc signed. Because you built it yourself rather than downloading it,
+Gatekeeper will not get in the way and there is nothing to notarize.
+
+Once installed you can open a photo by dragging it onto the window or the Dock icon, with
+**⌘O**, or by right-clicking any image in Finder and choosing *Open With → Shapeshifter*.
+Exports go through a normal macOS save panel, and **⇧⌘C** puts the cut-out on the
+clipboard as a transparent PNG.
+
+### If you would rather not build anything
+
+Double-click `run-local.command`. It serves the same editor to your default browser from
+your own machine — no compiler needed, though it does need Node or Python 3 installed.
+Everything still stays local.
+
+### Running it as a web page
 
 ```bash
 npm start          # http://localhost:5173
@@ -62,7 +98,12 @@ background fill, and whether to crop to the shape or keep the original canvas.
 ## How it works
 
 ```
+macos/
+  Sources/main.swift  the Mac app: window, menus, Open/Save panels, pasteboard
+  build.sh            compiles Shapeshifter.app and bundles the editor into it
+  Info.plist          bundle metadata, including the image types it can open
 js/
+  native.js         the bridge to the Mac shell; inert in a plain browser
   app.js            UI wiring, keyboard, file lifecycle, the scripting surface
   mask.js           the selection: one 8-bit alpha value per pixel, plus feather/grow/shrink
   contour.js        traces a mask back into closed vector paths (marching triangles + RDP)
@@ -91,6 +132,14 @@ the even-odd fill rule.
 Compositing happens at viewport resolution rather than image resolution, so previewing the
 cut-out of a 40-megapixel photo costs a screen's worth of memory instead of a photo's worth.
 
+**The Mac app is a real app, not a wrapped website.** `main.swift` provides the window,
+menu bar, `NSOpenPanel`/`NSSavePanel` and `NSPasteboard`; the editing engine runs in a
+`WKWebView` and is served from inside the app bundle over a private `shapeshifter://` URL
+scheme. Using a custom scheme rather than `file://` is what lets the engine's ES modules
+load, and it means the app needs no local server and opens no sockets. Opening a photo
+hands the bytes to the page through a one-shot transfer the scheme handler serves, so a
+large TIFF never has to cross the bridge base64-encoded.
+
 ## Scripting it
 
 The editor exposes `window.shapeshifter` for the console and for tests:
@@ -108,15 +157,24 @@ Also available: `selectPolygon(points, mode)`, `wandAt(x, y, opts)`, `setExportO
 ## Tests
 
 ```bash
-npm test             # 64 checks in a real browser
-node test/smoke.mjs --headed
+npm test                      # all three suites
+npm run test:editor           # 68 checks in a real browser
+node test/smoke.mjs --headed  # watch them happen
 ```
 
-The tests decode the files Shapeshifter actually produces and assert on their pixels — that
-an exported ellipse has four transparent corners and covers π/4 of its file, that a
-subtracted region is a transparent hole, that the TIFF decoder agrees with the browser's own
-PNG decode to the byte, that padding adds transparent margin, that JPEG comes out fully
-opaque. Outputs land in `test/output/` so you can open them yourself.
+`test/smoke.mjs` decodes the files Shapeshifter actually produces and asserts on their
+pixels — that an exported ellipse has four transparent corners and covers π/4 of its file,
+that a subtracted region is a transparent hole, that the TIFF decoder agrees with the
+browser's own PNG decode to the byte, that padding adds transparent margin, that JPEG comes
+out fully opaque. Outputs land in `test/output/` so you can open them yourself.
+
+`test/check-bundle.mjs` assembles the payload that goes inside `Shapeshifter.app` exactly
+as `build.sh` does, serves it with the same path and MIME rules the Swift implements, and
+checks the editor boots from the bundle alone and makes no network requests at all.
+
+`test/check-bridge.mjs` cross-checks the Swift against the page it drives. The shell calls
+JavaScript by name and reads message fields the page posts, and neither language can catch
+a rename on the other side, so this verifies the contract directly.
 
 Requires Playwright (`npm install -D playwright && npx playwright install chromium`).
 
@@ -127,8 +185,9 @@ Requires Playwright (`npm install -D playwright && npx playwright install chromi
 - Images above roughly 64 megapixels are refused rather than risking the tab's memory.
 - The magic wand matches on colour distance alone. For a subject against a busy background,
   rough it in with the wand and clean up with the brush.
-- Export is limited to what the browser can encode: PNG, JPEG and WebP. There is no AVIF or
-  TIFF output.
+- Export is limited to PNG, JPEG and WebP encoding. There is no AVIF or TIFF output.
+- The Mac app builds for the architecture of the Mac that builds it, which is what you want
+  for your own machine but means the `.app` is not universal.
 
 ## Licence
 

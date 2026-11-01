@@ -440,7 +440,42 @@ async function main() {
     }
     check('every preview mode renders without error', consoleErrors.length === 0, consoleErrors.join(' | '));
 
-    /* ------------------------------ 13. write real files for outside checks */
+    /* ------------------------------------ 13. the macOS bridge contract */
+    console.log('\nmacOS shell bridge');
+    const native = await page.evaluate(async () => {
+      // Stand in for the Swift side: record what the page hands the shell.
+      const calls = [];
+      globalThis.__shapeshifterNative = {
+        save: (blob, filename) => calls.push({ kind: 'save', filename, size: blob.size, type: blob.type }),
+        requestOpen: () => calls.push({ kind: 'open' }),
+        copyImage: (blob) => calls.push({ kind: 'clipboard', size: blob.size }),
+      };
+      await window.shapeshifter.openUrl('/test/fixtures/photo.png', 'photo.png');
+      window.shapeshifter.selectEllipse(100, 75, 40, 30);
+      await window.shapeshifter.editor.export();
+      const status = window.shapeshifter.state().status;
+      delete globalThis.__shapeshifterNative;
+      return { calls, status };
+    });
+    check('export hands the file to the shell instead of downloading it',
+      native.calls.length === 1 && native.calls[0].kind === 'save',
+      JSON.stringify(native.calls));
+    check('the shell receives a named PNG with real bytes',
+      native.calls[0]?.filename === 'photo-shape.png' && native.calls[0]?.size > 500
+        && native.calls[0]?.type === 'image/png',
+      `${native.calls[0]?.filename} ${native.calls[0]?.size}B ${native.calls[0]?.type}`);
+    check('the status line defers to the native save panel',
+      /ready to save/i.test(native.status), native.status);
+
+    // isNative() must stay false in a plain browser, so the web build is unaffected.
+    const stillWeb = await page.evaluate(() => ({
+      shell: document.documentElement.dataset.shell ?? null,
+      hasBridge: Boolean(globalThis.webkit?.messageHandlers?.shapeshifter),
+    }));
+    check('a plain browser is not treated as the native shell',
+      stillWeb.shell === null && stillWeb.hasBridge === false, JSON.stringify(stillWeb));
+
+    /* ------------------------------ 14. write real files for outside checks */
     console.log('\nWriting exported files to disk');
     const saved = await page.evaluate(async () => {
       await window.shapeshifter.openUrl('/test/fixtures/photo.png', 'photo.png');

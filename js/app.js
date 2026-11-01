@@ -8,6 +8,7 @@ import { View } from './view.js';
 import { ACCEPTED_EXTENSIONS, loadImageFile } from './decode/image.js';
 import { DEFAULT_OPTIONS, FORMATS, exportCutout, exportRegion } from './export.js';
 import { $, baseName, clamp, debounce, downloadBlob, el, formatBytes } from './util.js';
+import { isNative } from './native.js';
 
 const ICONS = {
   lasso: '<path d="M10.5 3.2C5.8 3.2 2 5.9 2 9.2c0 2.2 1.8 4.2 4.5 5.2.3 1.1-.2 2-.9 2.6 1.4.1 2.6-.6 3.2-1.8h1.7c4.7 0 8.5-2.7 8.5-6S15.2 3.2 10.5 3.2Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="3 2.4" stroke-linejoin="round"/>',
@@ -170,7 +171,7 @@ class Shapeshifter {
 
     // --- Opening files -----------------------------------------------------
     const input = $('#fileInput');
-    const pick = () => input.click();
+    const pick = () => this.requestOpen();
     $('#openBtn').addEventListener('click', pick);
     $('#emptyOpenBtn').addEventListener('click', pick);
     input.addEventListener('change', () => {
@@ -441,7 +442,7 @@ class Shapeshifter {
     if (TOOL_KEYS[key]) {
       this.selectTool(TOOL_KEYS[key]);
     } else if (key === 'o') {
-      $('#fileInput').click();
+      this.requestOpen();
     } else if (key === '?') {
       $('#helpDialog').showModal();
     } else if (key === '[') {
@@ -467,6 +468,12 @@ class Shapeshifter {
   }
 
   /* -------------------------------------------------------- file lifecycle */
+
+  /** Show a file chooser — the Mac app's own panel when running natively. */
+  requestOpen() {
+    if (isNative()) globalThis.__shapeshifterNative.requestOpen();
+    else $('#fileInput').click();
+  }
 
   async open(file) {
     const name = file.name || 'image';
@@ -565,7 +572,9 @@ class Shapeshifter {
       const result = await exportCutout(this.source, this.mask, baseName(this.fileName), this.exportOptions);
       downloadBlob(result.blob, result.filename);
       this.setStatus(
-        `Exported ${result.filename} — ${result.width} x ${result.height}, ${formatBytes(result.blob.size)}.`,
+        isNative()
+          ? `Ready to save ${result.filename} — ${result.width} x ${result.height}, ${formatBytes(result.blob.size)}.`
+          : `Exported ${result.filename} — ${result.width} x ${result.height}, ${formatBytes(result.blob.size)}.`,
       );
     } catch (error) {
       console.error(error);
@@ -580,7 +589,8 @@ class Shapeshifter {
         ...this.exportOptions,
         format: 'png',
       });
-      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      if (isNative()) await globalThis.__shapeshifterNative.copyImage(blob);
+      else await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
       this.setStatus('Copied the cut-out to the clipboard as a transparent PNG.');
     } catch (error) {
       this.setStatus(`Could not copy to the clipboard: ${error.message}`, 'error');
