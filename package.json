@@ -1,0 +1,15 @@
+{
+  "name": "shapeshifter",
+  "version": "1.0.0",
+  "description": "Outline any part of a photo and export it in that exact shape — PNG/WebP with real transparency, or SVG with a vector clip path.",
+  "type": "module",
+  "scripts": {
+    "start": "node serve.js",
+    "dev": "node serve.js",
+    "test": "node test/smoke.mjs"
+  },
+  "keywords": ["image-editor", "lasso", "magic-wand", "alpha-mask", "png", "tiff", "svg", "cutout"],
+  "license": "MIT",
+  "private": true,
+  "engines": { "node": ">=18" }
+}
