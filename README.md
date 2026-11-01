@@ -15,31 +15,37 @@ connections of any kind, and your photo never leaves your Mac.
 
 ## Install on macOS
 
-Needs macOS 13 or newer, and the Xcode Command Line Tools for the compiler. If you do
-not already have them, macOS will offer to install them when you run this (full Xcode is
-not required):
+**[Download Shapeshifter.dmg](https://github.com/Lorca7/Shapeshifter/releases/latest/download/Shapeshifter.dmg)**
+— macOS 13 or newer, Apple silicon or Intel.
 
-```bash
-xcode-select --install
-```
+1. Double-click the downloaded `Shapeshifter.dmg`.
+2. Drag **Shapeshifter** onto the **Applications** folder in the window that opens.
+3. The first time only: in Applications, **right-click Shapeshifter › Open**, then click
+   **Open**. After that it opens normally from Launchpad or the Dock.
 
-Then, from this folder:
+That one-time step is because the app is not notarized with a paid Apple Developer
+account, so macOS asks you to confirm it once. If you double-clicked it first and got a
+"cannot be opened" message, go to **System Settings › Privacy & Security** and click
+**Open Anyway**.
+
+Once installed you can open a photo by dragging it onto the window or the Dock icon, with
+**⌘O**, or by right-clicking any image in Finder and choosing *Open With › Shapeshifter*.
+Exports go through a normal macOS save panel, and **⇧⌘C** puts the cut-out on the
+clipboard as a transparent PNG.
+
+The disk image is rebuilt by GitHub Actions (`.github/workflows/macos-app.yml`) whenever the
+app changes. Each build is compiled as a universal binary, mounted, copied out the way
+Finder would copy it, and launched before it is published.
+
+### Building it yourself
+
+Needs the Xcode Command Line Tools (`xcode-select --install`; full Xcode is not required):
 
 ```bash
 ./macos/build.sh --install
 ```
 
-That compiles `Shapeshifter.app`, drops it in `/Applications`, and it shows up in
-Launchpad. Build without installing with `./macos/build.sh`, or build and launch in one
-step with `./macos/build.sh --run`.
-
-The app is ad-hoc signed. Because you built it yourself rather than downloading it,
-Gatekeeper will not get in the way and there is nothing to notarize.
-
-Once installed you can open a photo by dragging it onto the window or the Dock icon, with
-**⌘O**, or by right-clicking any image in Finder and choosing *Open With → Shapeshifter*.
-Exports go through a normal macOS save panel, and **⇧⌘C** puts the cut-out on the
-clipboard as a transparent PNG.
+A locally built app is never quarantined, so it skips the right-click › Open step.
 
 ### If you would rather not build anything
 
