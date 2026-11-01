@@ -20,39 +20,13 @@ let kAppName = "Shapeshifter"
 /// The name the page posts messages to: window.webkit.messageHandlers.shapeshifter
 let kBridgeName = "shapeshifter"
 
-// MARK: - Handing files between Swift and the page
-
-/// Short-lived store for a photo on its way into the page. The page fetches it
-/// over the app's own URL scheme, so a large photo never has to cross the
-/// bridge as a base64 string.
-final class TransferStore {
-    private var items: [String: (data: Data, mime: String)] = [:]
-    private let lock = NSLock()
-
-    func put(_ data: Data, mime: String) -> String {
-        let id = UUID().uuidString
-        lock.lock()
-        items[id] = (data, mime)
-        lock.unlock()
-        return id
-    }
-
-    func take(_ id: String) -> (data: Data, mime: String)? {
-        lock.lock()
-        defer { lock.unlock() }
-        return items.removeValue(forKey: id)
-    }
-}
-
 // MARK: - Serving the bundled editor
 
 final class AssetSchemeHandler: NSObject, WKURLSchemeHandler {
     private let root: URL
-    private let transfers: TransferStore
 
-    init(root: URL, transfers: TransferStore) {
+    init(root: URL) {
         self.root = root
-        self.transfers = transfers
     }
 
     func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
@@ -63,16 +37,6 @@ final class AssetSchemeHandler: NSObject, WKURLSchemeHandler {
 
         var path = url.path
         if path.isEmpty || path == "/" { path = "/index.html" }
-
-        if path.hasPrefix("/__transfer/") {
-            let id = String(path.dropFirst("/__transfer/".count))
-            guard let item = transfers.take(id) else {
-                task.didFailWithError(URLError(.resourceUnavailable))
-                return
-            }
-            respond(task: task, url: url, data: item.data, mime: item.mime)
-            return
-        }
 
         let fileURL = URL(fileURLWithPath: root.path + path).standardizedFileURL
         // Never serve anything outside the bundle's web folder.
@@ -121,7 +85,6 @@ final class AssetSchemeHandler: NSObject, WKURLSchemeHandler {
 final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavigationDelegate {
     private var window: NSWindow!
     private var webView: WKWebView!
-    private let transfers = TransferStore()
     /// Photos asked for before the editor had finished loading.
     private var queuedFiles: [URL] = []
     private var ready = false
@@ -140,7 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
 
         let configuration = WKWebViewConfiguration()
-        configuration.setURLSchemeHandler(AssetSchemeHandler(root: root, transfers: transfers), forURLScheme: kScheme)
+        configuration.setURLSchemeHandler(AssetSchemeHandler(root: root), forURLScheme: kScheme)
         configuration.userContentController.add(self, name: kBridgeName)
 
         webView = WKWebView(frame: .zero, configuration: configuration)
@@ -332,9 +295,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             report("Could not read \(fileURL.lastPathComponent).", isError: true)
             return
         }
+        let name = fileURL.lastPathComponent
         let mime = AssetSchemeHandler.mimeType(for: fileURL.pathExtension)
-        let id = transfers.put(data, mime: mime)
-        run("window.__openTransfer(\(quote(id)), \(quote(fileURL.lastPathComponent)), \(quote(mime)))")
+        // callAsyncJavaScript waits for the page to finish opening the photo and
+        // reports what went wrong, so a failure becomes a message, not silence.
+        webView.callAsyncJavaScript(
+            "await window.__openPhoto(data, name, type)",
+            arguments: ["data": data.base64EncodedString(), "name": name, "type": mime],
+            in: nil, in: .page
+        ) { [weak self] result in
+            guard case .failure(let error) = result else { return }
+            let detail = (error as NSError).userInfo["WKJavaScriptExceptionMessage"] as? String
+                ?? error.localizedDescription
+            if self?.isSelfTest == true { print("page: could not open \(name): \(detail)") }
+            self?.report("Could not open \(name): \(detail)", isError: true)
+        }
     }
 
     // MARK: Navigation policy
@@ -438,7 +413,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         let script = """
         const out = {
           app: typeof window.shapeshifter,
-          transfer: typeof window.__openTransfer,
+          openPhoto: typeof window.__openPhoto,
           scripts: document.scripts.length,
           hint: (document.getElementById('hint') || {}).textContent || null,
         };

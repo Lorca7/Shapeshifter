@@ -46,9 +46,10 @@ check('every page method Swift calls exists', missing.length === 0,
   missing.length ? `missing: ${missing}` : `${called.length}: ${called.join(', ')}`);
 
 check('Swift hands photos over through the entry point the page defines',
-  swift.includes('window.__openTransfer(') && app.includes('window.__openTransfer ='));
-check('both sides agree on the /__transfer/ path',
-  swift.includes('"/__transfer/"') && app.includes('/__transfer/'));
+  swift.includes('window.__openPhoto(data, name, type)') && app.includes('window.__openPhoto ='));
+check('the arguments Swift passes are the ones the page expects',
+  /arguments: \["data": [^,]+, "name": [^,]+, "type": [^\]]+\]/.test(swift)
+    && /window\.__openPhoto = async \(base64, name, type\)/.test(app));
 
 console.log('\nBuild and packaging');
 check('the build copies index.html, css and js into the app',

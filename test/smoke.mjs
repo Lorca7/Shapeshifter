@@ -376,6 +376,18 @@ async function main() {
     await app.keyboard.press('Control+z');
     check('the menu bar, not the page, owns command shortcuts there',
       (await app.evaluate(() => window.shapeshifter.state())).points.length === 3);
+    const fixture = (await readFile(resolve(ROOT, 'test/fixtures/photo.png'))).toString('base64');
+    const handedOver = await app.evaluate(async (b64) => {
+      await window.__openPhoto(b64, 'from-finder.png', 'image/png');
+      return window.shapeshifter.state();
+    }, fixture);
+    check('a photo handed over by the app opens, replacing the old one',
+      handedOver.loaded && handedOver.width === 200 && handedOver.points.length === 0, `${handedOver.width}x${handedOver.height}`);
+    const refusedByApp = await app.evaluate(async () => {
+      try { await window.__openPhoto(btoa('not an image'), 'x.txt', 'text/plain'); return 'no error'; }
+      catch (e) { return e.message; }
+    });
+    check('a bad file is reported back to the app instead of lost', /does not look like an image/i.test(refusedByApp), refusedByApp);
     check('the app stays quiet when nothing is wrong',
       !posted.some((m) => m.type === 'log'), JSON.stringify(posted.filter((m) => m.type === 'log')));
   } finally {

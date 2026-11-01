@@ -160,10 +160,12 @@ class Shapeshifter {
       this.message = null;
       this.fit();
       this.refresh();
+      return true;
     } catch (error) {
       // A refused file is ordinary feedback for the user, not a fault.
       console.warn(error);
       this.setHint(error.message || 'Could not open that file.', 'error');
+      return false;
     }
   }
 
@@ -618,12 +620,11 @@ const editor = new Shapeshifter();
 window.shapeshifter = editor;
 
 // The Mac app calls this once the user has picked a photo, dropped one on the
-// Dock icon, or used "Open With". The bytes arrive over the app's own URL
-// scheme instead of through the message bridge, so a large photo never has to
-// be base64-encoded.
-window.__openTransfer = async (id, name, type) => {
-  const response = await fetch(`/__transfer/${id}`);
-  if (!response.ok) throw new Error(`Could not read ${name}.`);
-  const blob = await response.blob();
-  await editor.open(new File([blob], name, { type: type || blob.type }));
+// Dock icon, or used "Open With". The photo arrives as base64 text and any
+// error is reported back to the app rather than lost.
+window.__openPhoto = async (base64, name, type) => {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  if (!(await editor.open(new File([bytes], name, { type })))) throw new Error(editor.state().hint);
 };
